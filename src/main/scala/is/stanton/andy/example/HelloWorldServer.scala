@@ -2,8 +2,10 @@ package is.stanton.andy.example
 
 import java.util.logging.{LogManager, Logger}
 
+import io.grpc.ForwardingServerCall.SimpleForwardingServerCall
+import io.grpc.netty.NettyServerBuilder
 import io.grpc.protobuf.services.ProtoReflectionService
-import io.grpc.{Server, ServerBuilder}
+import io.grpc._
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -22,12 +24,36 @@ object HelloWorldServer {
   }
 }
 
+class HeaderServerInterceptor extends ServerInterceptor {
+  private val logger =
+    Logger.getLogger(classOf[HeaderServerInterceptor].getName)
+
+  override def interceptCall[ReqT, RespT](
+    call: ServerCall[ReqT, RespT],
+    headers: Metadata,
+    next: ServerCallHandler[ReqT, RespT]
+  ): ServerCall.Listener[ReqT] = {
+    next.startCall(
+      new SimpleForwardingServerCall[ReqT, RespT](call) {
+        if (!call.getMethodDescriptor.getFullMethodName
+              .startsWith("grpc.reflection")) {
+          logger.info(
+            s"Intercepted call to ${call.getMethodDescriptor.getFullMethodName} with headers ${headers.toString}"
+          )
+        }
+      },
+      headers
+    )
+  }
+}
+
 class HelloWorldServer(executionContext: ExecutionContext) { self =>
   private[this] var server: Server = _
 
   private def start() {
-    server = ServerBuilder
+    server = NettyServerBuilder
       .forPort(HelloWorldServer.port)
+      .intercept(new HeaderServerInterceptor())
       .addService(ExampleGrpc.bindService(new ExampleImpl, executionContext))
       .addService(ProtoReflectionService.newInstance())
       .build
